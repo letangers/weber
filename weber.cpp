@@ -1,5 +1,4 @@
 #include "weber.h"
-#include <netdb.h>
 #include <iostream>
 
 
@@ -10,36 +9,53 @@
 
 
 int main(){
-    int sock = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
-    if(sock < 0){
-        std::cout<<"error wehn create socker"<<std::endl;
+    int listenfd = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
+    if(listenfd < 0){
+        std::cout<<"error wehn create socket"<<std::endl;
         return -1;
     }
-
     struct sockaddr_in ser_addr;
     memset(&ser_addr,0,sizeof(ser_addr));
     ser_addr.sin_family=AF_INET;
-    ser_addr.sin_port=htons(80);
-    std::string host = "baidu.com";
-    struct hostent *p_host = gethostbyname(host.c_str());
-    memcpy(&(ser_addr.sin_addr),p_host->h_addr_list[0],sizeof(ser_addr.sin_addr));
+    ser_addr.sin_port=htons(12138);
+    ser_addr.sin_addr.s_addr = inet_addr("0.0.0.0");
 
-    if(connect(sock,(struct sockaddr*)&ser_addr,sizeof(ser_addr))<0){
-        std::cout<<"error when connect to "<<host<<std::endl;
+    int on = 1;
+    if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on))<0){
+        std::cout<<"err when open reuse addr"<<std::endl;
         return -1;
     }
 
-    char send_buf[65535] = "GET / HTTP/1.1\r\nHost: www.baidu.com\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9\r\nAccept-Encoding: gzip, deflate, br\r\nAccept-Language: en,zh-CN;q=0.9,zh;q=0.8,en-US;q=0.7\r\nUser-Agent: Mozilla/5.0 (X11; CrOS x86_64 14324.13.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.20 Safari/537.36\r\n\r\n";
-    //int nbyte = writen(sock,send_buf,strlen(send_buf));
-    int nbyte = write(sock,send_buf,strlen(send_buf));
-    std::cout<<"send "<<nbyte<<"  "<<strlen(send_buf)<<std::endl;
+    if(bind(listenfd,(struct sockaddr*)&ser_addr,sizeof(ser_addr))<0){
+        std::cout<<"err when bind"<<std::endl;
+        close(listenfd);
+        return -1;
+    }
+    if(listen(listenfd,SOMAXCONN)<0){
+        std::cout<<"err when listen"<<std::endl;
+        close(listenfd);
+        return -1;
+    }
 
-    char recv_buf[65535];
-    //nbyte = readn(sock,recv_buf,65535);
-    nbyte = read(sock,recv_buf,65535);
-    std::cout<<"recv "<<nbyte<<std::endl;
-    std::cout<<recv_buf<<std::endl;
-
-    close(sock);
+    struct sockaddr_in peeraddr;
+    socklen_t peerlen=sizeof(peeraddr);
+    while(true){
+        char recv_buf[65535];
+        char send_buf[65535];
+        char html_buf[1024] = "<html><body><h1>我的第一个网页</h1></body></html>\r\n";
+        sprintf(send_buf,"HTTP/1.1 200 OK\r\nContent-Type: text/html;charset=utf-8\r\nContent-Length: %d\r\n\r\n%s",strlen(html_buf),html_buf);
+        int conn = accept(listenfd,(struct sockaddr*)&peeraddr,&peerlen);
+        if(conn < 0){
+            std::cout<<"err when accept"<<std::endl;
+            close(listenfd);
+            return -1;
+        }
+        read(conn,recv_buf,65535);
+        std::cout<<recv_buf<<std::endl;
+        write(conn,send_buf,strlen(send_buf));
+        close(conn);
+        break;
+    }
+    close(listenfd);
     return 0;
 }
