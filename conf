@@ -1,0 +1,29 @@
+/*
+ */
+[core]
+concurrent=0
+
+// 后台执行
+backstage=0
+
+[network]
+server=0.0.0.0
+port=12138
+
+# keep-alive 的连接，心跳时间
+close_after=10
+
+[log]
+log_dir=./log/
+
+/* 
+  定义日志级别:
+    debug
+    info
+    warrning
+    error
+    off
+*/
+log_level=off
+
+[other]
