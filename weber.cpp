@@ -7,67 +7,25 @@
 #include <arpa/inet.h>
 #include <iostream>
 
+#include <pthread.h>
 
 
-int main(int argc,char **argv){
-    Arg arg = Arg();
-    arg.init();
-    if(arg.parse_args(argc,argv) < 0){
-        std::cerr<<"parse args error"<<std::endl;
-        return -1;
-    }
-    if(arg.help) return 0;
-    Config config = Config();
-    if(config.load_config(arg.config_path.c_str()) < 0){
-        std::cerr<<"load config error"<<std::endl;
-        return -1;
-    }
+void *func(void *ptr){
+    std::cout<<"in thread "<<std::endl;
+    int conn = *((int *)ptr);
 
-    int listenfd = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
-    if(listenfd < 0){
-        std::cout<<"error wehn create socket"<<std::endl;
-        return -1;
-    }
-
-    struct sockaddr_in ser_addr;
-    memset(&ser_addr,0,sizeof(ser_addr));
-    ser_addr.sin_family=AF_INET;
-    ser_addr.sin_port=config.port;
-    ser_addr.sin_addr.s_addr = config.server;
-    
-    int on = 1;
-    if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on))<0){
-        std::cout<<"err when open reuse addr"<<std::endl;
-        return -1;
-    }
-
-    if(bind(listenfd,(struct sockaddr*)&ser_addr,sizeof(ser_addr))<0){
-        std::cerr<<"err when bind"<<std::endl;
-        close(listenfd);
-        return -1;
-    }
-    if(listen(listenfd,config.conn_max)<0){
-        std::cerr<<"err when listen"<<std::endl;
-        close(listenfd);
-        return -1;
-    }
-
-    struct sockaddr_in peeraddr;
-    socklen_t peerlen=sizeof(peeraddr);
+    char recv_buf[1500];
+    char send_buf[1500];
+    int ret;
     while(true){
-        char recv_buf[1500];
-        char send_buf[1500];
-        //sprintf(send_buf,"HTTP/1.1 200 OK\r\nContent-Type: text/html;charset=utf-8\r\nContent-Length: %d\r\n\r\n%s",strlen(html_buf),html_buf);
-        int conn = accept(listenfd,(struct sockaddr*)&peeraddr,&peerlen);
-        if(conn < 0){
-            std::cout<<"err when accept"<<std::endl;
-            close(listenfd);
-            continue;
+        ret = read(conn,recv_buf,sizeof(recv_buf));
+        if(ret <= 0){
+            break;
         }
-        std::cout<<"recv from "<<inet_ntoa(peeraddr.sin_addr)<<", port is "<<ntohs(peeraddr.sin_port)<<std::endl;
-        int len = read(conn,recv_buf,sizeof(recv_buf));
+        std::cout<<"read ret is "<<ret<<std::endl;
         Request arequest = Request();
-        arequest.parse_head(recv_buf,len);
+        arequest.parse_head(recv_buf,ret);
+
         char path[256];
         if(arequest.uri_[1] == 0){
             snprintf(path,256,"%s/index.html",config.root_dir);
@@ -97,13 +55,79 @@ int main(int argc,char **argv){
         rewind(fp);
         file_len = fread(file_buf,1,filesize,fp);
         fclose(fp);
-        std::cout<<"file content "<<file_buf<<std::endl;
 
         int send_len = 1500;
         aresponse.make_response(send_buf,&send_len,file_buf,file_len);
-        std::cout<<"send buf "<<send_buf<<std::endl;
         write(conn,send_buf,strlen(send_buf));
-        close(conn);
+
+        // 解keep-alive
+        /*
+        if not keep-alive:
+            break
+        */
+    }
+    close(conn);
+    std::cout<<"out thread "<<std::endl;
+}
+
+int main(int argc,char **argv){
+    arg.init();
+    if(arg.parse_args(argc,argv) < 0){
+        std::cerr<<"parse args error"<<std::endl;
+        return -1;
+    }
+    if(arg.help) return 0;
+    if(config.load_config(arg.config_path.c_str()) < 0){
+        std::cerr<<"load config error"<<std::endl;
+        return -1;
+    }
+
+    int listenfd = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
+    if(listenfd < 0){
+        std::cout<<"error wehn create socket"<<std::endl;
+        return -1;
+    }
+
+    struct sockaddr_in ser_addr;
+    memset(&ser_addr,0,sizeof(ser_addr));
+    ser_addr.sin_family=AF_INET;
+    ser_addr.sin_port=config.port;
+    ser_addr.sin_addr.s_addr = config.server;
+
+    int on = 1;
+    if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on))<0){
+        std::cout<<"err when open reuse addr"<<std::endl;
+        return -1;
+    }
+
+    if(bind(listenfd,(struct sockaddr*)&ser_addr,sizeof(ser_addr))<0){
+        std::cerr<<"err when bind"<<std::endl;
+        close(listenfd);
+        return -1;
+    }
+    if(listen(listenfd,config.conn_max)<0){
+        std::cerr<<"err when listen"<<std::endl;
+        close(listenfd);
+        return -1;
+    }
+
+    struct sockaddr_in peeraddr;
+    socklen_t peerlen=sizeof(peeraddr);
+    while(true){
+        int conn = accept(listenfd,(struct sockaddr*)&peeraddr,&peerlen);
+        if(conn < 0){
+            std::cout<<"err when accept"<<std::endl;
+            close(listenfd);
+            continue;
+        }
+        std::cout<<"recv from "<<inet_ntoa(peeraddr.sin_addr)<<", port is "<<ntohs(peeraddr.sin_port)<<std::endl;
+
+        pthread_t pid;
+        if(pthread_create(&pid,NULL,func,&conn) != 0){
+            std::cerr<<"error when create a new thread"<<std::endl;
+            close(conn);
+            continue;
+        }
     }
     close(listenfd);
     return 0;
