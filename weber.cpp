@@ -8,6 +8,7 @@
 #include <iostream>
 
 #include <pthread.h>
+#include <sys/epoll.h>
 
 
 void *func(void *ptr){
@@ -77,14 +78,31 @@ int main(int argc,char **argv){
         return -1;
     }
     if(arg.help) return 0;
-    if(config.load_config(arg.config_path.c_str()) < 0){
+    if(config.load_config(arg.config_path) < 0){
         std::cerr<<"load config error"<<std::endl;
         return -1;
     }
 
+    // epoll
+    int epollfd = epoll_create1(0);
+    struct epoll_event ev;
+
+    /*
+     * 开启日志线程，预分配空间
+     */
+
     int listenfd = socket(PF_INET,SOCK_STREAM,IPPROTO_TCP);
     if(listenfd < 0){
-        std::cout<<"error wehn create socket"<<std::endl;
+        std::cout<<"error when create socket"<<std::endl;
+        return -1;
+    }
+    
+    ev.events = EPOLLIN;
+    ev.data.fd = listenfd;
+    if(epoll_ctl(epollfd,EPOLL_CTL_ADD,listenfd,&ev) < 0){
+        // log_error("error when epoll ctl add listenfd")
+        close(listenfd);
+        close(epollfd);
         return -1;
     }
 
@@ -113,20 +131,44 @@ int main(int argc,char **argv){
 
     struct sockaddr_in peeraddr;
     socklen_t peerlen=sizeof(peeraddr);
+    int connfd;
+    int nready;
+    struct epoll_event events[1024];
     while(true){
-        int conn = accept(listenfd,(struct sockaddr*)&peeraddr,&peerlen);
-        if(conn < 0){
-            std::cout<<"err when accept"<<std::endl;
-            close(listenfd);
-            continue;
+        nready = epoll_wait(epollfd,events,1024,-1);
+        if(nready == -1){
+            // log error
+            // clean 
+            return -1;
         }
-        std::cout<<"recv from "<<inet_ntoa(peeraddr.sin_addr)<<", port is "<<ntohs(peeraddr.sin_port)<<std::endl;
-
-        pthread_t pid;
-        if(pthread_create(&pid,NULL,func,&conn) != 0){
-            std::cerr<<"error when create a new thread"<<std::endl;
-            close(conn);
-            continue;
+        for(int i = 0;i<nready;i++){
+            if(events[i].data.fd == listenfd){
+                connfd = accept(listenfd,(struct sockaddr*)&peeraddr,&peerlen);
+                if(connfd < 0){
+                    std::cout<<"err when accept"<<std::endl;
+                    continue;
+                }
+                std::cout<<"recv from "<<inet_ntoa(peeraddr.sin_addr)<<", port is "<<ntohs(peeraddr.sin_port)<<std::endl;
+                ev.events = EPOLLIN;
+                ev.data.fd = connfd;
+                if(epoll_ctl(epollfd,EPOLL_CTL_ADD,connfd,&ev) < 0){
+                    // log_error("error when epoll ctl add connfd")
+                    close(connfd);
+                    continue;
+                }
+            }
+            else{
+                connfd = events[i].data.fd;
+                pthread_t pid;
+                if(pthread_create(&pid,NULL,func,&connfd) != 0){
+                    std::cerr<<"error when create a new thread"<<std::endl;
+                    close(connfd);
+                    continue;
+                }
+                ev.events = EPOLLIN;
+                ev.data.fd = connfd;
+                epoll_ctl(epollfd,EPOLL_CTL_DEL,connfd,&ev);
+            }
         }
     }
     close(listenfd);
